@@ -1,0 +1,346 @@
+<!--
+Copyright (C) 2015 The Android Open Source Project
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+
+<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="../../../behaviors/keyboard-shortcut-behavior.html">
+<link rel="import" href="../../../behaviors/rest-client-behavior.html">
+<link rel="import" href="../../shared/gr-account-link/gr-account-link.html">
+<link rel="import" href="../../shared/gr-button/gr-button.html">
+<link rel="import" href="../../shared/gr-change-star/gr-change-star.html">
+<link rel="import" href="../../shared/gr-date-formatter/gr-date-formatter.html">
+<link rel="import" href="../../shared/gr-editable-content/gr-editable-content.html">
+<link rel="import" href="../../shared/gr-js-api-interface/gr-js-api-interface.html">
+<link rel="import" href="../../shared/gr-linked-text/gr-linked-text.html">
+<link rel="import" href="../../shared/gr-overlay/gr-overlay.html">
+<link rel="import" href="../../shared/gr-rest-api-interface/gr-rest-api-interface.html">
+
+<link rel="import" href="../gr-change-actions/gr-change-actions.html">
+<link rel="import" href="../gr-change-metadata/gr-change-metadata.html">
+<link rel="import" href="../gr-commit-info/gr-commit-info.html">
+<link rel="import" href="../gr-download-dialog/gr-download-dialog.html">
+<link rel="import" href="../gr-file-list/gr-file-list.html">
+<link rel="import" href="../gr-messages-list/gr-messages-list.html">
+<link rel="import" href="../gr-related-changes-list/gr-related-changes-list.html">
+<link rel="import" href="../gr-reply-dialog/gr-reply-dialog.html">
+
+<dom-module id="gr-change-view">
+  <template>
+    <style>
+      .container:not(.loading) {
+        background-color: var(--view-background-color);
+      }
+      .container.loading {
+        color: #666;
+        padding: 1em var(--default-horizontal-margin);
+      }
+      .header {
+        align-items: center;
+        background-color: var(--view-background-color);
+        display: flex;
+        padding: .65em var(--default-horizontal-margin);
+        z-index: 99;  /* Less than gr-overlay's backdrop */
+      }
+      .header .download {
+        margin-right: 1em;
+      }
+      .header.pinned {
+        border-bottom-color: transparent;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+        position: fixed;
+        top: 0;
+        transition: box-shadow 250ms linear;
+        width: 100%;
+      }
+      .header-title {
+        flex: 1;
+        font-size: 1.2em;
+        font-weight: bold;
+      }
+      gr-change-star {
+        margin-right: .25em;
+        vertical-align: -.425em;
+      }
+      gr-reply-dialog {
+        width: 50em;
+      }
+      .changeStatus {
+        color: #999;
+        text-transform: capitalize;
+      }
+      /* Strong specificity here is needed due to
+         https://github.com/Polymer/polymer/issues/2531 */
+      .container section.changeInfo {
+        display: flex;
+        padding: 0 var(--default-horizontal-margin);
+      }
+      .changeInfo-column:not(:last-of-type) {
+        margin-right: 1em;
+        padding-right: 1em;
+      }
+      .changeMetadata {
+        font-size: .95em;
+      }
+      .commitMessage {
+        font-family: var(--monospace-font-family);
+        flex: 0 0 72ch;
+        margin-right: 2em;
+        margin-bottom: 1em;
+      }
+      .commitMessage gr-linked-text {
+        overflow: auto;
+      }
+      .editCommitMessage {
+        margin-top: 1em;
+      }
+      .commitActions {
+        border-bottom: 1px solid #ddd;
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: .5em;
+        padding-bottom: .5em;
+      }
+      .reply {
+        margin-right: .5em;
+      }
+      .mainChangeInfo {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+      }
+      .commitAndRelated {
+        align-content: flex-start;
+        display: flex;
+        flex: 1;
+        overflow-x: hidden;
+      }
+      .relatedChanges {
+        flex: 1 1 auto;
+        font-size: .9em;
+        overflow: hidden;
+      }
+      .patchInfo {
+        border: 1px solid #ddd;
+        margin: 1em var(--default-horizontal-margin);
+      }
+      .patchInfo--oldPatchSet .patchInfo-header {
+        background-color: #fff9c4;
+      }
+      .patchInfo--oldPatchSet .latestPatchContainer {
+        display: initial;
+      }
+      .patchInfo-header,
+      gr-file-list {
+        padding: .5em calc(var(--default-horizontal-margin) / 2);
+      }
+      .patchInfo-header {
+        background-color: #f6f6f6;
+        border-bottom: 1px solid #ebebeb;
+        display: flex;
+        justify-content: space-between;
+      }
+      .latestPatchContainer {
+        display: none;
+      }
+      @media screen and (max-width: 50em) {
+        .header {
+          align-items: flex-start;
+          flex-direction: column;
+          padding: .5em var(--default-horizontal-margin);
+        }
+        gr-change-star {
+          vertical-align: middle;
+        }
+        .header-title {
+          font-size: 1.1em;
+        }
+        gr-reply-dialog {
+          min-width: initial;
+          width: 90vw;
+        }
+        .downloadContainer {
+          display: none;
+        }
+        .reply {
+          display: block;
+          margin-right: 0;
+          margin-bottom: .5em;
+        }
+        .changeInfo-column:not(:last-of-type) {
+          margin-right: 0;
+          padding-right: 0;
+        }
+        .changeInfo,
+        .commitAndRelated {
+          flex-direction: column;
+          flex-wrap: nowrap;
+        }
+        .relatedChanges,
+        .changeMetadata {
+          font-size: 1em;
+        }
+        .changeMetadata {
+          border-right: none;
+          margin-bottom: 1em;
+          margin-top: .25em;
+          max-width: none;
+        }
+        .commitActions {
+          flex-direction: column;
+        }
+        .commitMessage {
+          flex: initial;
+          margin-right: 0;
+        }
+      }
+    </style>
+    <div class="container loading" hidden$="{{!_loading}}">Loading...</div>
+    <div class="container" hidden$="{{_loading}}">
+      <div class="header">
+        <span class="header-title">
+          <gr-change-star change="{{_change}}" hidden$="[[!_loggedIn]]"></gr-change-star>
+          <a href$="[[_computeChangePermalink(_change._number)]]">[[_change._number]]</a><span>:</span>
+          <span>[[_change.subject]]</span>
+          <span class="changeStatus">[[_computeChangeStatus(_change, _patchRange.patchNum)]]</span>
+        </span>
+      </div>
+      <section class="changeInfo">
+        <div class="changeInfo-column changeMetadata">
+          <gr-change-metadata
+              change="{{_change}}"
+              server-config="[[serverConfig]]"
+              mutable="[[_loggedIn]]"
+              on-show-reply-dialog="_handleShowReplyDialog">
+          </gr-change-metadata>
+          <!-- Plugins insert content into following container.
+               Stop-gap until PolyGerrit plugins interface is ready.
+               This will not work with Shadow DOM. -->
+          <div id="change_plugins"></div>
+        </div>
+        <div class="changeInfo-column mainChangeInfo">
+          <div class="commitActions" hidden$="[[!_loggedIn]]"">
+            <gr-button
+                class="reply"
+                secondary
+                on-tap="_handleReplyTap">[[_replyButtonLabel]]</gr-button>
+            <gr-change-actions id="actions"
+                change="[[_change]]"
+                actions="[[_change.actions]]"
+                change-num="[[_changeNum]]"
+                patch-num="[[_computeLatestPatchNum(_allPatchSets)]]"
+                commit-message="[[_latestCommitMessage]]"
+                on-reload-change="_handleReloadChange"></gr-change-actions>
+          </div>
+          <div class="commitAndRelated">
+            <div class="commitMessage">
+              <gr-editable-content id="commitMessageEditor"
+                  editing="[[_editingCommitMessage]]"
+                  content="{{_latestCommitMessage}}">
+                <gr-linked-text pre
+                    content="[[_latestCommitMessage]]"
+                    config="[[_projectConfig.commentlinks]]"></gr-linked-text>
+              </gr-editable-content>
+              <gr-button link
+                  class="editCommitMessage"
+                  on-tap="_handleEditCommitMessage"
+                  hidden$="[[_hideEditCommitMessage]]">Edit</gr-button>
+            </div>
+            <div class="relatedChanges">
+              <gr-related-changes-list id="relatedChanges"
+                  change="[[_change]]"
+                  patch-num="[[_computeLatestPatchNum(_allPatchSets)]]"></gr-related-changes-list>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class$="patchInfo [[_computePatchInfoClass(_patchRange.patchNum, _allPatchSets)]]">
+        <div class="patchInfo-header">
+          <div>
+            <label class="patchSelectLabel" for="patchSetSelect">Patch set</label>
+            <select id="patchSetSelect" on-change="_handlePatchChange">
+              <template is="dom-repeat" items="[[_allPatchSets]]" as="patchNumber">
+                <option value$="[[patchNumber]]" selected$="[[_computePatchIndexIsSelected(index, _patchRange.patchNum)]]">
+                  <span>[[patchNumber]]</span>
+                  /
+                  <span>[[_computeLatestPatchNum(_allPatchSets)]]</span>
+                </option>
+              </template>
+            </select>
+            <span class="downloadContainer">
+              /
+              <gr-button link
+                  class="download"
+                  on-tap="_handleDownloadTap">Download</gr-button>
+            </span>
+            <span class="latestPatchContainer">
+              /
+              <a href$="/c/[[_change._number]]">Go to latest patch set</a>
+            </span>
+          </div>
+          <gr-commit-info
+              change="[[_change]]"
+              server-config="[[serverConfig]]"
+              commit-info="[[_commitInfo]]"></gr-commit-info>
+        </div>
+        <gr-file-list id="fileList"
+            change="[[_change]]"
+            change-num="[[_changeNum]]"
+            patch-range="[[_patchRange]]"
+            comments="[[_comments]]"
+            drafts="[[_diffDrafts]]"
+            revisions="[[_change.revisions]]"
+            projectConfig="[[_projectConfig]]"
+            selected-index="{{viewState.selectedFileIndex}}"
+            diff-view-mode="{{viewState.diffMode}}"></gr-file-list>
+      </section>
+      <gr-messages-list id="messageList"
+          change-num="[[_changeNum]]"
+          messages="[[_change.messages]]"
+          reviewer-updates="[[_change.reviewer_updates]]"
+          comments="[[_comments]]"
+          project-config="[[_projectConfig]]"
+          show-reply-buttons="[[_loggedIn]]"
+          on-reply="_handleMessageReply"></gr-messages-list>
+    </div>
+    <gr-overlay id="downloadOverlay" with-backdrop>
+      <gr-download-dialog
+          id="downloadDialog"
+          change="[[_change]]"
+          logged-in="[[_loggedIn]]"
+          patch-num="[[_patchRange.patchNum]]"
+          config="[[serverConfig.download]]"
+          on-close="_handleDownloadDialogClose"></gr-download-dialog>
+    </gr-overlay>
+    <gr-overlay id="replyOverlay"
+        no-cancel-on-outside-click
+        on-iron-overlay-opened="_handleReplyOverlayOpen"
+        with-backdrop>
+      <gr-reply-dialog id="replyDialog"
+          change="[[_change]]"
+          patch-num="[[_computeLatestPatchNum(_allPatchSets)]]"
+          labels="[[_change.labels]]"
+          permitted-labels="[[_change.permitted_labels]]"
+          diff-drafts="[[_diffDrafts]]"
+          server-config="[[serverConfig]]"
+          on-send="_handleReplySent"
+          on-cancel="_handleReplyCancel"
+          on-autogrow="_handleReplyAutogrow"
+          hidden$="[[!_loggedIn]]">Reply</gr-reply-dialog>
+    </gr-overlay>
+    <gr-js-api-interface id="jsAPI"></gr-js-api-interface>
+    <gr-rest-api-interface id="restAPI"></gr-rest-api-interface>
+  </template>
+  <script src="gr-change-view.js"></script>
+</dom-module>

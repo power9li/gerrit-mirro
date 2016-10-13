@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<!--
+Copyright (C) 2016 The Android Open Source Project
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+
+<meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
+<title>gr-diff-selection</title>
+
+<script src="../../../bower_components/webcomponentsjs/webcomponents.min.js"></script>
+<script src="../../../bower_components/web-component-tester/browser.js"></script>
+
+<link rel="import" href="../../../bower_components/iron-test-helpers/iron-test-helpers.html">
+<link rel="import" href="gr-diff-selection.html">
+
+<test-fixture id="basic">
+  <template>
+    <gr-diff-selection>
+      <table id="diffTable" class="side-by-side">
+        <tr>
+          <td class="lineNum left" data-value="1">1</td>
+          <td class="content">
+            <div class="contentText" data-side="left">ba ba</div>
+            <div data-side="left">
+              <div class="gr-diff-comment-thread">
+                <div class="message">
+                  <span>This is a comment</span>
+                </div>
+              </div>
+            </div>
+          </td>
+          <td class="lineNum right" data-value="1">1</td>
+          <td class="content">
+            <div class="contentText" data-side="right">some other text</div>
+          </td>
+        </tr>
+        <tr>
+          <td class="lineNum left" data-value="2">2</td>
+          <td class="content">
+            <div class="contentText" data-side="left">zin</div>
+          </td>
+          <td class="lineNum right" data-value="2">2</td>
+          <td class="content">
+            <div class="contentText" data-side="right">more more more</div>
+            <div data-side="right">
+              <div class="gr-diff-comment-thread">
+                <div class="message">
+                  <span>This is a comment on the right</span>
+                </div>
+              </div>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td class="lineNum left" data-value="3">3</td>
+          <td class="content">
+            <div class="contentText" data-side="left">ga ga</div>
+            <div data-side="left">
+              <div class="gr-diff-comment-thread">
+                <div class="message">
+                  <span>This is a different comment</span>
+                </div>
+              </div>
+            </div>
+          </td>
+          <td class="lineNum right" data-value="3">3</td>
+          <td class="other">
+            <div class="contentText" data-side="right">some other text</div>
+          </td>
+        </tr>
+      </table>
+    </gr-diff-selection>
+  </template>
+</test-fixture>
+
+<script>
+  suite('gr-diff-selection', function() {
+    var element;
+    var copyEventStub;
+
+    var emulateCopyOn = function(target) {
+      var fakeEvent = {
+        target: target,
+        preventDefault: sinon.stub(),
+        clipboardData: {
+          setData: sinon.stub(),
+        },
+      };
+      element._getCopyEventTarget.returns(target);
+      element._handleCopy(fakeEvent);
+      return fakeEvent;
+    };
+
+    setup(function() {
+      element = fixture('basic');
+      sinon.stub(element, '_getCopyEventTarget');
+      element._cachedDiffBuilder = {
+        getLineElByChild: sinon.stub().returns({}),
+        getSideByLineEl: sinon.stub(),
+        diffElement: element.querySelector('#diffTable'),
+      };
+      element.diff = {
+        content: [
+          {
+            a: ['ba ba'],
+            b: ['some other text'],
+          },
+          {
+            a: ['zin'],
+            b: ['more more more'],
+          },
+          {
+            a: ['ga ga'],
+            b: ['some other text'],
+          },
+        ],
+      };
+    });
+
+    test('applies selected-left on left side click', function() {
+      element.classList.add('selected-right');
+      element._cachedDiffBuilder.getSideByLineEl.returns('left');
+      MockInteractions.down(element);
+      assert.isTrue(
+          element.classList.contains('selected-left'), 'adds selected-left');
+      assert.isFalse(
+          element.classList.contains('selected-right'),
+          'removes selected-right');
+    });
+
+    test('applies selected-right on right side click', function() {
+      element.classList.add('selected-left');
+      element._cachedDiffBuilder.getSideByLineEl.returns('right');
+      MockInteractions.down(element);
+      assert.isTrue(
+          element.classList.contains('selected-right'), 'adds selected-right');
+      assert.isFalse(
+          element.classList.contains('selected-left'), 'removes selected-left');
+    });
+
+    test('ignores copy for non-content Element', function() {
+      sinon.stub(element, '_getSelectedText');
+      emulateCopyOn(element.querySelector('.other'));
+      assert.isFalse(element._getSelectedText.called);
+    });
+
+    test('asks for text for left side Elements', function() {
+      element._cachedDiffBuilder.getSideByLineEl.returns('left');
+      sinon.stub(element, '_getSelectedText');
+      emulateCopyOn(element.querySelector('div.contentText'));
+      assert.deepEqual(['left', false], element._getSelectedText.lastCall.args);
+    });
+
+    test('reacts to copy for content Elements', function() {
+      sinon.stub(element, '_getSelectedText');
+      emulateCopyOn(element.querySelector('div.contentText'));
+      assert.isTrue(element._getSelectedText.called);
+    });
+
+    test('copy event is prevented for content Elements', function() {
+      sinon.stub(element, '_getSelectedText');
+      element._cachedDiffBuilder.getSideByLineEl.returns('left');
+      element._getSelectedText.returns('test');
+      var event = emulateCopyOn(element.querySelector('div.contentText'));
+      assert.isTrue(event.preventDefault.called);
+    });
+
+    test('inserts text into clipboard on copy', function() {
+      sinon.stub(element, '_getSelectedText').returns('the text');
+      var event = emulateCopyOn(element.querySelector('div.contentText'));
+      assert.deepEqual(
+          ['Text', 'the text'], event.clipboardData.setData.lastCall.args);
+    });
+
+    test('copies content correctly', function() {
+      // Fetch the line number.
+      element._cachedDiffBuilder.getLineElByChild = function(child) {
+        while (!child.classList.contains('content') && child.parentElement) {
+          child = child.parentElement;
+        }
+        return child.previousElementSibling;
+      };
+
+      element.classList.add('selected-left');
+      element.classList.remove('selected-right');
+
+      var selection = window.getSelection();
+      var range = document.createRange();
+      range.setStart(element.querySelector('div.contentText').firstChild, 3);
+      range.setEnd(
+          element.querySelectorAll('div.contentText')[4].firstChild, 2);
+      selection.addRange(range);
+      assert.equal(element._getSelectedText('left'), 'ba\nzin\nga');
+      selection.removeAllRanges();
+    });
+
+    test('copies comments', function() {
+      element.classList.add('selected-left');
+      element.classList.add('selected-comment');
+      element.classList.remove('selected-right');
+      var selection = window.getSelection();
+      var range = document.createRange();
+      range.setStart(element.querySelector('.message *').firstChild, 3);
+      range.setEnd(
+          element.querySelectorAll('.message *')[2].firstChild, 16);
+      selection.addRange(range);
+      assert.equal('s is a comment\nThis is a differ',
+          element._getSelectedText('left', true));
+      selection.removeAllRanges();
+    });
+  });
+</script>

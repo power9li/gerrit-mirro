@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<!--
+Copyright (C) 2015 The Android Open Source Project
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+
+<meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
+<title>gr-change-view</title>
+
+<script src="../../../bower_components/webcomponentsjs/webcomponents.min.js"></script>
+<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="../../../bower_components/page/page.js"></script>
+<script src="../../../scripts/util.js"></script>
+
+<link rel="import" href="../../../bower_components/iron-test-helpers/iron-test-helpers.html">
+<link rel="import" href="gr-change-view.html">
+
+<test-fixture id="basic">
+  <template>
+    <gr-change-view></gr-change-view>
+  </template>
+</test-fixture>
+
+<script>
+  suite('gr-change-view tests', function() {
+    var element;
+    var TEST_SCROLL_TOP_PX = 100;
+
+    setup(function() {
+      stub('gr-rest-api-interface', {
+        getAccount: function() { return Promise.resolve(null); },
+      });
+      element = fixture('basic');
+    });
+
+    suite('keyboard shortcuts', function() {
+      test('U should navigate to / if no backPage set', function() {
+        var showStub = sinon.stub(page, 'show');
+        MockInteractions.pressAndReleaseKeyOn(element, 85);  // 'U'
+        assert(showStub.lastCall.calledWithExactly('/'));
+        showStub.restore();
+      });
+
+      test('U should navigate to backPage if set', function() {
+        element.backPage = '/dashboard/self';
+        var showStub = sinon.stub(page, 'show');
+        MockInteractions.pressAndReleaseKeyOn(element, 85);  // 'U'
+        assert(showStub.lastCall.calledWithExactly('/dashboard/self'));
+        showStub.restore();
+      });
+
+      test('A should toggle overlay', function() {
+        MockInteractions.pressAndReleaseKeyOn(element, 65);  // 'A'
+        var overlayEl = element.$.replyOverlay;
+        assert.isFalse(overlayEl.opened);
+        element._loggedIn = true;
+
+        MockInteractions.pressAndReleaseKeyOn(element, 65, 'shift');  // 'A'
+        assert.isFalse(overlayEl.opened);
+
+        MockInteractions.pressAndReleaseKeyOn(element, 65);  // 'A'
+        assert.isTrue(overlayEl.opened);
+        overlayEl.close();
+        assert.isFalse(overlayEl.opened);
+      });
+
+      test('shift + R should fetch and navigate to the latest patch set',
+          function(done) {
+        element._changeNum = '42';
+        element._patchRange = {
+          basePatchNum: 'PARENT',
+          patchNum: 1,
+        };
+        element._change = {
+          change_id: 'Iad9dc96274af6946f3632be53b106ef80f7ba6ca',
+          revisions: {
+            rev1: {_number: 1},
+          },
+          current_revision: 'rev1',
+          status: 'NEW',
+          labels: {},
+          actions: {},
+        };
+
+        sinon.stub(element.$.restAPI, '_getChangeDetail', function() {
+          // Mock change obj.
+          return Promise.resolve({
+            change_id: 'Iad9dc96274af6946f3632be53b106ef80f7ba6ca',
+            revisions: {
+              rev1: {_number: 1},
+              rev13: {_number: 13},
+            },
+            current_revision: 'rev1',
+            status: 'NEW',
+            labels: {},
+            actions: {},
+          });
+        });
+
+        var showStub = sinon.stub(page, 'show', function(arg) {
+          assert.equal(arg, '/c/42/13');
+          showStub.restore();
+          element.$.restAPI._getChangeDetail.restore();
+          done();
+        });
+
+        // 'shift + R'
+        MockInteractions.pressAndReleaseKeyOn(element, 82, 'shift');
+      });
+
+      test('d should open download overlay', function() {
+        var stub = sinon.stub(element.$.downloadOverlay, 'open');
+        MockInteractions.pressAndReleaseKeyOn(element, 68); // 'd'
+        assert.isTrue(stub.called);
+        stub.restore();
+      });
+    });
+
+    test('reply button has updated count when there are drafts', function() {
+      var replyButton = element.$$('gr-button.reply');
+      assert.ok(replyButton);
+      assert.equal(replyButton.textContent, 'Reply');
+
+      element._diffDrafts = null;
+      assert.equal(replyButton.textContent, 'Reply');
+
+      element._diffDrafts = {};
+      assert.equal(replyButton.textContent, 'Reply');
+
+      element._diffDrafts = {
+        'file1.txt': [{}],
+        'file2.txt': [{}, {}],
+      };
+      assert.equal(replyButton.textContent, 'Reply (3)');
+    });
+
+    test('comment events properly update diff drafts', function() {
+      element._patchRange = {
+        basePatchNum: 'PARENT',
+        patchNum: 2,
+      };
+      var draft = {
+        __draft: true,
+        id: 'id1',
+        path: '/foo/bar.txt',
+        text: 'hello',
+      };
+      element._handleCommentSave({target: {comment: draft}});
+      draft.patch_set = 2;
+      assert.deepEqual(element._diffDrafts, {'/foo/bar.txt': [draft]});
+      draft.patch_set = null;
+      draft.text = 'hello, there';
+      element._handleCommentSave({target: {comment: draft}});
+      draft.patch_set = 2;
+      assert.deepEqual(element._diffDrafts, {'/foo/bar.txt': [draft]});
+      var draft2 = {
+        __draft: true,
+        id: 'id2',
+        path: '/foo/bar.txt',
+        text: 'hola',
+      };
+      element._handleCommentSave({target: {comment: draft2}});
+      draft2.patch_set = 2;
+      assert.deepEqual(element._diffDrafts, {'/foo/bar.txt': [draft, draft2]});
+      draft.patch_set = null;
+      element._handleCommentDiscard({target: {comment: draft}});
+      draft.patch_set = 2;
+      assert.deepEqual(element._diffDrafts, {'/foo/bar.txt': [draft2]});
+      element._handleCommentDiscard({target: {comment: draft2}});
+      assert.deepEqual(element._diffDrafts, {});
+    });
+
+    test('change num change', function() {
+      element._changeNum = null;
+      element._patchRange = {
+        basePatchNum: 'PARENT',
+        patchNum: 2,
+      };
+      element._change = {
+        change_id: 'Iad9dc96274af6946f3632be53b106ef80f7ba6ca',
+        labels: {},
+      };
+      element.viewState.changeNum = null;
+      element.viewState.diffMode = 'UNIFIED';
+      flushAsynchronousOperations();
+      assert.equal(element.viewState.diffMode, 'UNIFIED');
+
+      element._changeNum = '1';
+      element.params = {changeNum: '1'};
+      element._change.newProp = '1';
+      flushAsynchronousOperations();
+      assert.equal(element.viewState.diffMode, 'UNIFIED');
+      assert.equal(element.viewState.changeNum, '1');
+
+      element._changeNum = '2';
+      element.params = {changeNum: '2'};
+      element._change.newProp = '2';
+      flushAsynchronousOperations();
+      assert.isNull(element.viewState.diffMode);
+      assert.equal(element.viewState.changeNum, '2');
+    });
+
+    test('patch num change', function(done) {
+      element._changeNum = '42';
+      element._patchRange = {
+        basePatchNum: 'PARENT',
+        patchNum: 2,
+      };
+      element._change = {
+        change_id: 'Iad9dc96274af6946f3632be53b106ef80f7ba6ca',
+        revisions: {
+          rev2: {_number: 2},
+          rev1: {_number: 1},
+          rev13: {_number: 13},
+          rev3: {_number: 3},
+        },
+        current_revision: 'rev3',
+        status: 'NEW',
+        labels: {},
+      };
+      element.viewState.diffMode = 'UNIFIED';
+      flushAsynchronousOperations();
+
+      var selectEl = element.$$('.patchInfo-header select');
+      assert.ok(selectEl);
+      var optionEls = Polymer.dom(element.root).querySelectorAll(
+          '.patchInfo-header option');
+      assert.equal(optionEls.length, 4);
+      assert.isFalse(element.$$('.patchInfo-header option[value="1"]')
+          .hasAttribute('selected'));
+      assert.isTrue(element.$$('.patchInfo-header option[value="2"]')
+          .hasAttribute('selected'));
+      assert.isFalse(element.$$('.patchInfo-header option[value="3"]')
+          .hasAttribute('selected'));
+      assert.equal(optionEls[3].value, 13);
+
+      var showStub = sinon.stub(page, 'show');
+
+      var numEvents = 0;
+      selectEl.addEventListener('change', function(e) {
+        assert.equal(element.viewState.diffMode, 'UNIFIED');
+        numEvents++;
+        if (numEvents == 1) {
+          assert(showStub.lastCall.calledWithExactly('/c/42/1'),
+              'Should navigate to /c/42/1');
+          selectEl.value = '3';
+          element.fire('change', {}, {node: selectEl});
+        } else if (numEvents == 2) {
+          assert(showStub.lastCall.calledWithExactly('/c/42'),
+              'Should navigate to /c/42');
+          showStub.restore();
+          done();
+        }
+      });
+      selectEl.value = '1';
+      element.fire('change', {}, {node: selectEl});
+    });
+
+    test('patch num change with missing current_revision', function(done) {
+      element._changeNum = '42';
+      element._patchRange = {
+        basePatchNum: 'PARENT',
+        patchNum: 2,
+      };
+      element._change = {
+        change_id: 'Iad9dc96274af6946f3632be53b106ef80f7ba6ca',
+        revisions: {
+          rev2: {_number: 2},
+          rev1: {_number: 1},
+          rev13: {_number: 13},
+          rev3: {_number: 3},
+        },
+        status: 'NEW',
+        labels: {},
+      };
+      flushAsynchronousOperations();
+      var selectEl = element.$$('.patchInfo-header select');
+      assert.ok(selectEl);
+      var optionEls = Polymer.dom(element.root).querySelectorAll(
+          '.patchInfo-header option');
+      assert.equal(optionEls.length, 4);
+      assert.isFalse(element.$$('.patchInfo-header option[value="1"]')
+          .hasAttribute('selected'));
+      assert.isTrue(element.$$('.patchInfo-header option[value="2"]')
+          .hasAttribute('selected'));
+      assert.isFalse(element.$$('.patchInfo-header option[value="3"]')
+          .hasAttribute('selected'));
+      assert.equal(optionEls[3].value, 13);
+
+      var showStub = sinon.stub(page, 'show');
+
+      var numEvents = 0;
+      selectEl.addEventListener('change', function(e) {
+        numEvents++;
+        if (numEvents == 1) {
+          assert(showStub.lastCall.calledWithExactly('/c/42/1'),
+              'Should navigate to /c/42/1');
+          selectEl.value = '3';
+          element.fire('change', {}, {node: selectEl});
+        } else if (numEvents == 2) {
+          assert(showStub.lastCall.calledWithExactly('/c/42/3'),
+              'Should navigate to /c/42/3');
+          showStub.restore();
+          done();
+        }
+      });
+      selectEl.value = '1';
+      element.fire('change', {}, {node: selectEl});
+    });
+
+    test('don’t reload entire page when patchRange changes', function() {
+      var reloadStub = sinon.stub(element, '_reload',
+          function() { return Promise.resolve(); });
+      var reloadPatchDependentStub = sinon.stub(element,
+          '_reloadPatchNumDependentResources',
+          function() { return Promise.resolve(); });
+
+      var value = {
+        view: 'gr-change-view',
+        patchNum: '1',
+      };
+      element._paramsChanged(value);
+      assert.isTrue(reloadStub.calledOnce);
+      element._initialLoadComplete = true;
+
+      value.basePatchNum = '1';
+      value.patchNum = '2';
+      element._paramsChanged(value);
+      assert.isFalse(reloadStub.calledTwice);
+      assert.isTrue(reloadPatchDependentStub.calledOnce);
+
+      reloadStub.restore();
+      reloadPatchDependentStub.restore();
+    });
+
+    test('change status new', function() {
+      element._changeNum = '1';
+      element._patchRange = {
+        basePatchNum: 'PARENT',
+        patchNum: 1,
+      };
+      element._change = {
+        change_id: 'Iad9dc96274af6946f3632be53b106ef80f7ba6ca',
+        revisions: {
+          rev1: {_number: 1},
+        },
+        current_revision: 'rev1',
+        status: 'NEW',
+        labels: {},
+      };
+      var status = element._computeChangeStatus(element._change, '1');
+      assert.equal(status, '');
+    });
+
+    test('change status draft', function() {
+      element._changeNum = '1';
+      element._patchRange = {
+        basePatchNum: 'PARENT',
+        patchNum: 1,
+      };
+      element._change = {
+        change_id: 'Iad9dc96274af6946f3632be53b106ef80f7ba6ca',
+        revisions: {
+          rev1: {_number: 1},
+        },
+        current_revision: 'rev1',
+        status: 'DRAFT',
+        labels: {},
+      };
+      var status = element._computeChangeStatus(element._change, '1');
+      assert.equal(status, '(Draft)');
+    });
+
+    test('revision status draft', function() {
+      element._changeNum = '1';
+      element._patchRange = {
+        basePatchNum: 'PARENT',
+        patchNum: 1,
+      };
+      element._change = {
+        change_id: 'Iad9dc96274af6946f3632be53b106ef80f7ba6ca',
+        revisions: {
+          rev1: {_number: 1},
+          rev2: {
+            _number: 2,
+            draft: true,
+          },
+        },
+        current_revision: 'rev1',
+        status: 'NEW',
+        labels: {},
+      };
+      var status = element._computeChangeStatus(element._change, '2');
+      assert.equal(status, '(Draft)');
+    });
+
+    test('show commit message edit button', function() {
+      var _change = {
+        status: element.ChangeStatus.MERGED,
+      };
+      assert.isTrue(element._computeHideEditCommitMessage(false, false, {}));
+      assert.isTrue(element._computeHideEditCommitMessage(true, true, {}));
+      assert.isTrue(element._computeHideEditCommitMessage(false, true, {}));
+      assert.isFalse(element._computeHideEditCommitMessage(true, false, {}));
+      assert.isTrue(element._computeHideEditCommitMessage(true, false,
+          _change));
+    });
+
+    test('topic is coalesced to null', function(done) {
+      sinon.stub(element, '_changeChanged');
+      sinon.stub(element.$.restAPI, 'getChangeDetail', function() {
+        return Promise.resolve({id: '123456789', labels: {}});
+      });
+
+      element._getChangeDetail().then(function() {
+        assert.isNull(element._change.topic);
+        done();
+      });
+    });
+
+    test('reply dialog focus can be controlled', function() {
+      var FocusTarget = element.$.replyDialog.FocusTarget;
+      var openSpy = sinon.spy(element, '_openReplyDialog');
+
+      var e = {detail: {}};
+      element._handleShowReplyDialog(e);
+      assert(openSpy.lastCall.calledWithExactly(FocusTarget.REVIEWERS),
+          '_openReplyDialog should have been passed REVIEWERS');
+
+      e.detail.value = {ccsOnly: true};
+      element._handleShowReplyDialog(e);
+      assert(openSpy.lastCall.calledWithExactly(FocusTarget.CCS),
+          '_openReplyDialog should have been passed CCS');
+    });
+
+    test('class is applied to file list on old patch set', function() {
+      var allPatcheSets = [1, 2, 4];
+      assert.equal(element._computePatchInfoClass('1', allPatcheSets),
+          'patchInfo--oldPatchSet');
+      assert.equal(element._computePatchInfoClass('2', allPatcheSets),
+          'patchInfo--oldPatchSet');
+      assert.equal(element._computePatchInfoClass('4', allPatcheSets), '');
+    });
+
+    test('getUrlParameter functionality', function() {
+      var locationStub = sinon.stub(element, '_getLocationSearch');
+
+      locationStub.returns('?test');
+      assert.equal(element._getUrlParameter('test'), 'test');
+      locationStub.returns('?test2=12&test=3');
+      assert.equal(element._getUrlParameter('test'), 'test');
+      locationStub.returns('');
+      assert.isNull(element._getUrlParameter('test'));
+      locationStub.returns('?');
+      assert.isNull(element._getUrlParameter('test'));
+      locationStub.returns('?test2');
+      assert.isNull(element._getUrlParameter('test'));
+
+      locationStub.restore();
+    });
+
+    test('revert dialog opened with revert param', function(done) {
+      sinon.stub(element.$.restAPI, 'getLoggedIn', function() {
+        return Promise.resolve(true);
+      });
+
+      element._patchRange = {
+        basePatchNum: 'PARENT',
+        patchNum: 2,
+      };
+      element._change = {
+          change_id: 'Iad9dc96274af6946f3632be53b106ef80f7ba6ca',
+          revisions: {
+            rev1: {_number: 1},
+          },
+          current_revision: 'rev1',
+          status: element.ChangeStatus.MERGED,
+          labels: {},
+          actions: {},
+      };
+
+      var urlParamStub = sinon.stub(element, '_getUrlParameter',
+          function(param) {
+            assert.equal(param, 'revert');
+            urlParamStub.restore();
+            element.$.restAPI.getLoggedIn.restore();
+            return param;
+          });
+
+      var revertDialogStub = sinon.stub(element.$.actions, 'showRevertDialog',
+          function() {
+            revertDialogStub.restore();
+            done();
+          });
+
+      element._maybeShowRevertDialog();
+    });
+
+    suite('scroll related tests', function() {
+      test('document scrolling calls function to set scroll height',
+          function(done) {
+            var scrollStub = sinon.stub(element, '_handleScroll',
+                function() {
+                  assert.isTrue(scrollStub.called);
+                  document.body.style.height =
+                      originalHeight + 'px';
+                  scrollStub.restore();
+                  done();
+                });
+            var originalHeight = document.body.scrollHeight;
+            document.body.style.height = '10000px';
+            document.body.scrollTop = TEST_SCROLL_TOP_PX;
+            element._handleScroll();
+          });
+
+      test('history is loaded correctly', function() {
+        history.replaceState(
+            {
+              scrollTop: 100,
+              path: location.pathname,
+            },
+            location.pathname);
+
+        var reloadStub = sinon.stub(element, '_reload',
+            function() {
+              // When element is reloaded, ensure that the history
+              // state has the scrollTop set earlier. This will then
+              // be reset.
+              assert.isTrue(history.state.scrollTop == 100);
+              return Promise.resolve({});
+            });
+
+        // simulate reloading component, which is done when route
+        // changes to match a regex of change view type.
+        element._paramsChanged({view: 'gr-change-view'});
+        reloadStub.restore();
+      });
+    });
+
+    suite('reply dialog tests', function() {
+      setup(function() {
+        sinon.stub(element.$.replyDialog, '_draftChanged');
+      });
+
+      test('reply from comment adds quote text', function() {
+        var e = {detail: {message: {message: 'quote text'}}};
+        element._handleMessageReply(e);
+        assert.equal(element.$.replyDialog.draft, '> quote text\n\n');
+        assert.equal(element.$.replyDialog.quote, '> quote text\n\n');
+      });
+
+      test('reply from comment replaces quote text', function() {
+        element.$.replyDialog.draft = '> old quote text\n\n some draft text';
+        element.$.replyDialog.quote = '> old quote text\n\n';
+        var e = {detail: {message: {message: 'quote text'}}};
+        element._handleMessageReply(e);
+        assert.equal(element.$.replyDialog.draft, '> quote text\n\n');
+        assert.equal(element.$.replyDialog.quote, '> quote text\n\n');
+      });
+
+      test('reply from same comment preserves quote text', function() {
+        element.$.replyDialog.draft = '> quote text\n\n some draft text';
+        element.$.replyDialog.quote = '> quote text\n\n';
+        var e = {detail: {message: {message: 'quote text'}}};
+        element._handleMessageReply(e);
+        assert.equal(element.$.replyDialog.draft,
+            '> quote text\n\n some draft text');
+        assert.equal(element.$.replyDialog.quote, '> quote text\n\n');
+      });
+
+      test('reply from top of page contains previous draft', function() {
+        var div = document.createElement('div');
+        element.$.replyDialog.draft = '> quote text\n\n some draft text';
+        element.$.replyDialog.quote = '> quote text\n\n';
+        var e = {target: div, preventDefault: sinon.spy()};
+        element._handleReplyTap(e);
+        assert.equal(element.$.replyDialog.draft,
+            '> quote text\n\n some draft text');
+        assert.equal(element.$.replyDialog.quote, '> quote text\n\n');
+      });
+    });
+  });
+</script>
